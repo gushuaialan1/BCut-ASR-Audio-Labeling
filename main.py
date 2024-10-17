@@ -10,32 +10,6 @@ import re
 # 设置日志级别为ERROR，减少输出信息
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def add_punctuation(text):
-    # 定义一些常见的语气词和连接词
-    pause_words = ['啊', '呢', '吧', '呀', '哦', '哈', '嗯', '噢', '喔']
-    conjunction_words = ['但是', '然而', '不过', '可是', '因为', '所以', '如果', '虽然', '尽管']
-    
-    # 在语气词后添加逗号
-    for word in pause_words:
-        text = text.replace(word, word + '，')
-    
-    # 在连接词前后添加逗号
-    for word in conjunction_words:
-        text = text.replace(word, '，' + word + '，')
-    
-    # 大约每15-20个字符添加一个逗号，除非已经有了标点符号
-    chars = list(text)
-    for i in range(15, len(chars), 15):
-        if i < len(chars) - 1 and chars[i] not in '，。！？' and chars[i-1] not in '，。！？':
-            chars.insert(i, '，')
-    text = ''.join(chars)
-    
-    # 确保句子以句号结尾
-    if not text.endswith('。'):
-        text += '。'
-    
-    return text
-
 def process_single_file(file_path, model_name):
     try:
         asr = BcutASR(file_path)
