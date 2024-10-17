@@ -20,8 +20,8 @@
 
 1. 克隆本项目:
    ```
-   git clone [您的项目URL]
-   cd [项目文件夹名]
+   git clone https://github.com/gushuaialan1/BCut-ASR-Audio-Labeling.git
+   cd BCut-ASR-Audio-Labeling
    ```
 
 2. 安装依赖:
@@ -72,4 +72,16 @@
 
 ## 许可证
 
-[在此添加您的许可证信息]
+本项目采用 MIT 许可证。详情请见 [LICENSE](LICENSE) 文件。
+
+## 致谢
+
+特别感谢 [bcut-asr](https://github.com/SocialSisterYi/bcut-asr) 项目，本工具基于其功能开发。
+
+## 贡献
+
+欢迎提交问题和拉取请求。对于重大更改，请先开issue讨论您想要改变的内容。
+
+## 免责声明
+
+本工具仅供学习和研究使用。使用者应当遵守相关法律法规和B站的服务条款。作者不对使用本工具造成的任何问题负责。
