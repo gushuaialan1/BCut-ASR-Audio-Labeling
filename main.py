@@ -1,9 +1,39 @@
 import os
+import sys
+import traceback
+import logging
+import tempfile
+import json
+
+# 如果是打包后的应用
+application_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+log_path = os.path.join(tempfile.gettempdir(), 'BCutASRLabeling', 'error_log.txt')
+
+# 确保日志文件的目录存在
+os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+# 设置日志
+logging.basicConfig(filename=log_path, level=logging.ERROR, 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+if getattr(sys, 'frozen', False):
+    # 如果是打包后的 exe 运行
+    bundle_dir = sys._MEIPASS
+    os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
+    os.environ['GRADIO_OFFLINE'] = 'True'
+else:
+    # 如果是脚本运行
+    bundle_dir = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.append(bundle_dir)
+sys.path.append(os.path.join(bundle_dir, 'gradio'))
+
+# 其余的导入和代码...
+
 import gradio as gr
 from bcut_asr import BcutASR
 from bcut_asr.orm import ResultStateEnum
 import time
-import logging
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
@@ -77,8 +107,7 @@ def annotate_audio(folder_path, model_name, num_threads=4, progress=gr.Progress(
         for line in results:
             f.write(line + '\n')
     
-    with open('last_process.json', 'w') as f:
-        json.dump({'folder_path': folder_path, 'model_name': model_name}, f)
+    save_last_process(folder_path, model_name)
     
     if failed_files:
         logging.warning(f"以下文件处理失败: {', '.join(failed_files)}")
@@ -111,19 +140,23 @@ def edit_annotations(folder_path, model_name, page=1, all_annotations=None):
         logging.warning(f"没有找到标注")
         return [gr.update(visible=False)] * 60 + [gr.update(visible=False), gr.update(visible=False), "没有找到标注"]
 
-    total_pages = (len(all_annotations) + 19) // 20
+    # 对整个标注行进行排序，基于文件名
+    sorted_annotations = sorted(all_annotations, key=lambda x: natural_sort_key(os.path.basename(x.split('|')[0])))
+
+    total_pages = (len(sorted_annotations) + 19) // 20
     page = max(1, min(page, total_pages))
     start_idx = (page - 1) * 20
     end_idx = start_idx + 20
 
-    current_annotations = all_annotations[start_idx:end_idx]
+    current_annotations = sorted_annotations[start_idx:end_idx]
     outputs = []
     for line in current_annotations:
         parts = line.split('|')
-        audio_filename = os.path.basename(parts[0])
-        full_path = os.path.join(folder_path, audio_filename)
+        audio_path = parts[0]  # 这是相对路径
+        audio_filename = os.path.basename(audio_path)
+        full_audio_path = os.path.join(folder_path, audio_filename)
         outputs.extend([
-            gr.update(value=full_path, visible=True),
+            gr.update(value=full_audio_path, visible=True),
             gr.update(value=f"标注 {audio_filename}", visible=True),
             gr.update(value=parts[3], visible=True, interactive=True),
         ])
@@ -141,11 +174,27 @@ def edit_annotations(folder_path, model_name, page=1, all_annotations=None):
     ]
 
 def load_last_process():
-    if os.path.exists('last_process.json'):
-        with open('last_process.json', 'r') as f:
-            data = json.load(f)
-        return data.get('folder_path', ''), data.get('model_name', '')
+    json_path = os.path.join(get_app_path(), 'last_process.json')
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+            logging.info(f"成功加载上次处理信息: {data}")
+            return data.get('folder_path', ''), data.get('model_name', '')
+        except Exception as e:
+            logging.error(f"读取 last_process.json 时出错: {e}")
+    else:
+        logging.info("未找到 last_process.json 文件")
     return '', ''
+
+def save_last_process(folder_path, model_name):
+    json_path = os.path.join(get_app_path(), 'last_process.json')
+    try:
+        with open(json_path, 'w') as f:
+            json.dump({'folder_path': folder_path, 'model_name': model_name}, f)
+        logging.info(f"成功保存处理信息: folder_path={folder_path}, model_name={model_name}")
+    except Exception as e:
+        logging.error(f"保存 last_process.json 时出错: {e}")
 
 def jump_to_page(folder_path, model_name, page):
     global all_annotations
@@ -169,10 +218,10 @@ def save_annotation(folder_path, model_name, page, index, new_text):
         parts = sorted_annotations[annotation_index].split('|')
         parts[3] = new_text
         sorted_annotations[annotation_index] = '|'.join(parts)
-        all_annotations = sorted_annotations
+        all_annotations = sorted_annotations  # 更新全局变量
         save_annotations(os.path.join(folder_path, f'{model_name}.list'), all_annotations)
         return f"已保存修改：第 {page} 页，第 {index + 1} 条"
-    return "保存失败：索引超出范围"
+    return "保失败：索引超出范围"
 
 def create_ui():
     last_folder, last_model = load_last_process()
@@ -186,7 +235,7 @@ def create_ui():
         gr.Markdown("# BCut ASR Audio Labeling")
         
         with gr.Tab("自动标注"):
-            folder_path = gr.Textbox(label="音频文件夹径", value=last_folder)
+            folder_path = gr.Textbox(label="音频文件夹路径", value=last_folder)
             model_name = gr.Textbox(label="模型名称", value=last_model)
             num_threads = gr.Slider(minimum=1, maximum=16, step=1, value=4, label="线程数量")
             submit_btn = gr.Button("开始标注")
@@ -262,8 +311,42 @@ def open_browser():
     time.sleep(2)
     webbrowser.open('http://127.0.0.1:7860')
 
+def add_gradio_to_path():
+    if getattr(sys, 'frozen', False):
+        bundle_dir = sys._MEIPASS
+    else:
+        bundle_dir = os.path.dirname(os.path.abspath(__file__))
+
+    gradio_dir = os.path.join(bundle_dir, 'gradio')
+    if os.path.exists(gradio_dir):
+        sys.path.insert(0, gradio_dir)
+
+def get_app_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+add_gradio_to_path()
+
 if __name__ == '__main__':
-    allowed_paths = [path for path in allowed_paths if os.path.isdir(path)]
-    app = create_ui()
-    threading.Thread(target=open_browser).start()
-    app.launch(allowed_paths=allowed_paths)
+    try:
+        logging.info(f"应用路径: {get_app_path()}")
+        allowed_paths = [path for path in allowed_paths if os.path.isdir(path)]
+        app = create_ui()
+        threading.Thread(target=open_browser).start()
+        app.launch(allowed_paths=allowed_paths)
+    except Exception as e:
+        error_msg = f"发生错误: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
+        
+        # 将错误信息写入文件
+        error_file = os.path.join(get_app_path(), 'error.txt')
+        with open(error_file, 'w') as f:
+            f.write(error_msg)
+        
+        # 显示错误信息消息框（仅在 Windows 上）
+        if sys.platform.startswith('win'):
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, error_msg, "错误", 0)
+
+        sys.exit(1)
